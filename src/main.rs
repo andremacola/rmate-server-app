@@ -1,15 +1,17 @@
+use std::fs;
 use std::path::PathBuf;
 use std::process::{Child, Command};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+use serde::{Deserialize, Serialize};
 use tray_icon::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tray_icon::TrayIconBuilder;
 use winit::event_loop::{ControlFlow, EventLoopBuilder};
 #[cfg(target_os = "macos")]
 use winit::platform::macos::EventLoopBuilderExtMacOS;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 enum Editor {
     Zed,
     Vscode,
@@ -28,6 +30,11 @@ impl Editor {
 
 struct AppState {
     server: Option<Child>,
+    editor: Editor,
+}
+
+#[derive(Serialize, Deserialize)]
+struct AppConfig {
     editor: Editor,
 }
 
@@ -77,8 +84,37 @@ fn stop_server(state: &mut AppState) {
     }
 }
 
+fn get_config_path() -> Option<PathBuf> {
+    dirs_next::config_dir().map(|mut path| {
+        path.push("rmate-server");
+        fs::create_dir_all(&path).ok(); // Create the directory if it doesn't exist
+        path.push("config.json");
+        path
+    })
+}
+
+fn load_config() -> AppConfig {
+    get_config_path()
+        .and_then(|path| fs::read_to_string(path).ok())
+        .and_then(|content| serde_json::from_str(&content).ok())
+        .unwrap_or(AppConfig {
+            editor: Editor::Zed, // Default editor
+        })
+}
+
+fn save_config(config: &AppConfig) {
+    if let Some(path) = get_config_path() {
+        let content = serde_json::to_string_pretty(config).unwrap();
+        if let Err(e) = fs::write(path, content) {
+            eprintln!("Failed to save config: {}", e);
+        }
+    }
+}
+
 fn main() {
     env_logger::init();
+
+    let config = load_config();
     let mut event_loop_builder = EventLoopBuilder::new();
 
     #[cfg(target_os = "macos")]
@@ -108,7 +144,7 @@ fn main() {
     // App state shared between threads
     let app_state = Arc::new(Mutex::new(AppState {
         server: None,
-        editor: Editor::Zed,
+        editor: config.editor,
     }));
 
     // --- Menu setup ---
@@ -118,9 +154,10 @@ fn main() {
     menu.append_items(&[&toggle_server_mi, &PredefinedMenuItem::separator()])
         .unwrap();
 
-    let zed_mi = CheckMenuItem::new("Zed", true, true, None);
-    let vscode_mi = CheckMenuItem::new("VS Code", true, false, None);
-    let sublime_mi = CheckMenuItem::new("Sublime Text", true, false, None);
+    let zed_mi = CheckMenuItem::new("Zed", true, config.editor == Editor::Zed, None);
+    let vscode_mi = CheckMenuItem::new("VS Code", true, config.editor == Editor::Vscode, None);
+    let sublime_mi =
+        CheckMenuItem::new("Sublime Text", true, config.editor == Editor::Sublime, None);
     menu.append_items(&[
         &zed_mi,
         &vscode_mi,
@@ -196,6 +233,7 @@ fn main() {
 
                     // Update state and check new editor
                     state.editor = new_editor;
+                    save_config(&AppConfig { editor: new_editor });
                     match new_editor {
                         Editor::Zed => zed_mi.set_checked(true),
                         Editor::Vscode => vscode_mi.set_checked(true),
