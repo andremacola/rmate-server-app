@@ -1,1 +1,0 @@
-console.log('RMate Zed Server Started');
