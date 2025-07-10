@@ -15,15 +15,26 @@ use winit::platform::macos::EventLoopBuilderExtMacOS;
 enum Editor {
     Zed,
     Vscode,
+    VscodeOpen,
     Sublime,
 }
 
 impl Editor {
-    fn to_bin_path(&self) -> &str {
+    fn to_bin_path(&self, resources_path: &PathBuf) -> String {
         match self {
-            Editor::Zed => "/usr/local/bin/zed",
-            Editor::Vscode => "/usr/local/bin/code",
-            Editor::Sublime => "/Applications/Sublime Text.app/Contents/SharedSupport/bin/subl",
+            Editor::Zed => "/usr/local/bin/zed".to_string(),
+            Editor::Vscode => "/usr/local/bin/code".to_string(),
+            Editor::VscodeOpen => resources_path.join("bin/wrappers/vscode-open.sh").to_string_lossy().to_string(),
+            Editor::Sublime => "/Applications/Sublime Text.app/Contents/SharedSupport/bin/subl".to_string(),
+        }
+    }
+
+    fn display_name(&self) -> &str {
+        match self {
+            Editor::Zed => "Zed",
+            Editor::Vscode => "VS Code (CLI)",
+            Editor::VscodeOpen => "VS Code (open -a)",
+            Editor::Sublime => "Sublime Text",
         }
     }
 }
@@ -56,20 +67,20 @@ fn start_server(state: &mut AppState, resources_path: &PathBuf) {
         return;
     }
 
-    let editor_path = state.editor.to_bin_path();
+    let editor_executable = state.editor.to_bin_path(resources_path);
     let server_path = resources_path.join("bin").join("zed-rmate-server");
 
     match Command::new(&server_path)
         .arg("--zed-bin")
-        .arg(editor_path)
+        .arg(&editor_executable)
         .spawn()
     {
         Ok(child) => {
             state.server = Some(child);
-            println!("Server started for {:?}", state.editor);
+            println!("Server started for {:?} using: {}", state.editor, editor_executable);
         }
         Err(e) => {
-            eprintln!("Failed to start server for {}: {}", editor_path, e);
+            eprintln!("Failed to start server for {}: {}", editor_executable, e);
         }
     }
 }
@@ -155,12 +166,14 @@ fn main() {
         .unwrap();
 
     let zed_mi = CheckMenuItem::new("Zed", true, config.editor == Editor::Zed, None);
-    let vscode_mi = CheckMenuItem::new("VS Code", true, config.editor == Editor::Vscode, None);
+    let vscode_mi = CheckMenuItem::new("VS Code (CLI)", true, config.editor == Editor::Vscode, None);
+    let vscode_open_mi = CheckMenuItem::new("VS Code (open -a)", true, config.editor == Editor::VscodeOpen, None);
     let sublime_mi =
         CheckMenuItem::new("Sublime Text", true, config.editor == Editor::Sublime, None);
     menu.append_items(&[
         &zed_mi,
         &vscode_mi,
+        &vscode_open_mi,
         &sublime_mi,
         &PredefinedMenuItem::separator(),
     ])
@@ -208,12 +221,15 @@ fn main() {
                 }
             } else if event.id == zed_mi.id()
                 || event.id == vscode_mi.id()
+                || event.id == vscode_open_mi.id()
                 || event.id == sublime_mi.id()
             {
                 let new_editor = if event.id == zed_mi.id() {
                     Editor::Zed
                 } else if event.id == vscode_mi.id() {
                     Editor::Vscode
+                } else if event.id == vscode_open_mi.id() {
+                    Editor::VscodeOpen
                 } else {
                     Editor::Sublime
                 };
@@ -228,6 +244,7 @@ fn main() {
                     match state.editor {
                         Editor::Zed => zed_mi.set_checked(false),
                         Editor::Vscode => vscode_mi.set_checked(false),
+                        Editor::VscodeOpen => vscode_open_mi.set_checked(false),
                         Editor::Sublime => sublime_mi.set_checked(false),
                     }
 
@@ -237,9 +254,10 @@ fn main() {
                     match new_editor {
                         Editor::Zed => zed_mi.set_checked(true),
                         Editor::Vscode => vscode_mi.set_checked(true),
+                        Editor::VscodeOpen => vscode_open_mi.set_checked(true),
                         Editor::Sublime => sublime_mi.set_checked(true),
                     }
-                    println!("Switched editor to {:?}", new_editor);
+                    println!("Switched editor to {}", new_editor.display_name());
 
                     if was_running {
                         // Give the port a moment to be released
@@ -251,6 +269,7 @@ fn main() {
                     match state.editor {
                         Editor::Zed => zed_mi.set_checked(true),
                         Editor::Vscode => vscode_mi.set_checked(true),
+                        Editor::VscodeOpen => vscode_open_mi.set_checked(true),
                         Editor::Sublime => sublime_mi.set_checked(true),
                     }
                 }
